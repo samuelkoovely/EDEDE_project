@@ -1,14 +1,68 @@
 from scipy.stats import uniform, expon, poisson
 import numpy as np
 from TemporalNetwork import ContTempNetwork
+from typing import Sequence, List, Tuple, Any
 
-def EDEDE(inter_tau = 2, activ_tau = 2, t_start = 0, t_end = 300):
+def EDEDE(activ_tau = 2, inter_tau = 2, t_start = 0, t_end = 300):
 
     number_of_events = poisson.rvs(size = 1, mu = (t_end - t_start) / activ_tau)[0]
     starting_times = np.sort(uniform.rvs(size=number_of_events, loc=t_start, scale=t_end - t_start))
     ending_times = expon.rvs(size=number_of_events, scale= inter_tau)
     ending_times = ending_times + starting_times
     return number_of_events, starting_times, ending_times
+
+
+def activity_EDEDE(starting_times: Sequence[Any],
+                    ending_times:   Sequence[Any]) -> Tuple[List[Any], List[int]]:
+    """
+    Compute the piecewise-constant active-event count over time for intervals [start, end).
+
+    Parameters
+    ----------
+    starting_times : sequence of comparable timestamps (float/int/datetime, etc.)
+    ending_times   : sequence of comparable timestamps, same length as starting_times
+
+    Returns
+    -------
+    change_times : list
+        Sorted timestamps where the count value changes.
+    counts_after : list of int
+        Active count immediately AFTER each timestamp in change_times (right-continuous).
+
+    Notes
+    -----
+    - Intervals are treated as half-open [start, end): starts add +1 at 'start', ends add -1 at 'end'.
+    - If multiple starts/ends share the same timestamp, their net effect is combined;
+      if the net change at a time is zero, that time is omitted (no change in the value).
+    """
+    if len(starting_times) != len(ending_times):
+        raise ValueError("starting_times and ending_times must have the same length.")
+
+    # Optional sanity check (kept on by default for safety)
+    for i, (s, e) in enumerate(zip(starting_times, ending_times)):
+        if not (s < e):
+            raise ValueError(f"Invalid interval at index {i}: start={s} must be < end={e}.")
+
+    # Accumulate +1 at starts and -1 at ends
+    delta_by_time = {}
+    for s in starting_times:
+        delta_by_time[s] = delta_by_time.get(s, 0) + 1
+    for e in ending_times:
+        delta_by_time[e] = delta_by_time.get(e, 0) - 1
+
+    change_times: List[Any] = []
+    counts_after: List[int] = []
+    current = 0
+
+    for t in sorted(delta_by_time):
+        delta = delta_by_time[t]
+        if delta != 0:  # skip timestamps with no net change
+            current += delta
+            change_times.append(t)
+            counts_after.append(current)
+
+    return change_times, counts_after
+
 
 
 def make_step_block_probs(deltat1,
@@ -77,7 +131,7 @@ def generate_evolving_SBM(inter_tau = 2, activ_tau = 2,
                           t_start = 0, t_end = 300,
                           basis_num_communities = 3, powers_num_communities = [3, 2, 1], list_p_within_community = [49/50] * len([27, 9, 3])):
 
-    number_of_events, starting_times, ending_times = EDEDE(inter_tau = inter_tau, activ_tau = activ_tau, t_start = t_start, t_end = t_end)
+    number_of_events, starting_times, ending_times = EDEDE(activ_tau = activ_tau, inter_tau = inter_tau, t_start = t_start, t_end = t_end)
 
     source_nodes = np.random.choice(n_groups * n_per_group, number_of_events, replace=True)
     block_mod_func = make_step_block_probs(deltat1 = (t_end - t_start) / len(powers_num_communities),
